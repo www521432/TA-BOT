@@ -10,26 +10,27 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, date
 import yfinance as yf
-import openpyxl
-
 # ── Config ────────────────────────────────────────────────────────────────────
 
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
-PORTFOLIO_FILE = os.path.join(os.path.dirname(__file__), "..", "portfolio.xlsx")
+PORTFOLIO_FILE = os.path.join(os.path.dirname(__file__), "..", "portfolio.csv")
 
-# ── Load portfolio from Excel ─────────────────────────────────────────────────
+# ── Load portfolio from CSV ───────────────────────────────────────────────────
 
 def load_portfolio() -> list:
-    wb = openpyxl.load_workbook(PORTFOLIO_FILE)
-    ws = wb.active
     tickers = []
-    for row in ws.iter_rows(min_row=2, values_only=True):
-        ticker, name, market, active = row[0], row[1], row[2], row[3]
-        if ticker and str(active).strip().lower() == "yes":
-            tickers.append(str(ticker).strip())
+    with open(PORTFOLIO_FILE, "r") as f:
+        lines = [l.strip() for l in f.readlines() if l.strip()]
+    # Skip header row
+    for line in lines[1:]:
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) >= 4:
+            ticker, name, market, active = parts[0], parts[1], parts[2], parts[3]
+            if ticker and active.lower() == "yes":
+                tickers.append(ticker)
     print(f"Loaded portfolio: {tickers}")
     return tickers
 
