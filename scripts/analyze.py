@@ -23,12 +23,16 @@ PORTFOLIO_FILE = os.path.join(os.path.dirname(__file__), "..", "portfolio.csv")
 def load_portfolio() -> list:
     tickers = []
     with open(PORTFOLIO_FILE, "r") as f:
-        lines = [l.strip() for l in f.readlines() if l.strip()]
-    # Skip header row
+        lines = f.readlines()
+    # Skip header row, skip empty lines
     for line in lines[1:]:
+        line = line.strip()
+        if not line:
+            continue
         parts = [p.strip() for p in line.split(",")]
         if len(parts) >= 4:
-            ticker, name, market, active = parts[0], parts[1], parts[2], parts[3]
+            ticker = parts[0].strip()
+            active = parts[3].strip()
             if ticker and active.lower() == "yes":
                 tickers.append(ticker)
     print(f"Loaded portfolio: {tickers}")
