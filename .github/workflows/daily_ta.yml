@@ -1,0 +1,49 @@
+name: Daily TA Report
+
+on:
+  schedule:
+    # US market close: 4:00 PM ET = 20:00 UTC (adjust for DST if needed)
+    # Taiwan market close: 1:30 PM CST = 05:30 UTC
+    # Run twice — after each market closes
+    - cron: "05 06 * * 1-5"   # Taiwan market close (Mon–Fri 06:05 UTC)
+    - cron: "05 20 * * 1-5"   # US market close    (Mon–Fri 20:05 UTC)
+
+  # Allow manual trigger from GitHub UI for testing
+  workflow_dispatch:
+    inputs:
+      portfolio:
+        description: "Comma-separated tickers (overrides secret)"
+        required: false
+        default: ""
+
+jobs:
+  ta-report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run TA analysis
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          PORTFOLIO: ${{ inputs.portfolio || secrets.PORTFOLIO }}
+        run: python scripts/analyze.py
