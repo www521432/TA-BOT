@@ -1,6 +1,6 @@
 """
 Daily Technical Analysis Bot
-Fetches price data, computes TA indicators, sends Telegram report.
+Reads portfolio from portfolio.xlsx, computes TA, sends Telegram report.
 """
 
 import os
@@ -10,13 +10,28 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, date
 import yfinance as yf
+import openpyxl
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-PORTFOLIO = os.environ.get("PORTFOLIO", "AAPL,TSLA,2330.TW,2317.TW").split(",")
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")  # optional AI summary
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+
+PORTFOLIO_FILE = os.path.join(os.path.dirname(__file__), "..", "portfolio.xlsx")
+
+# ── Load portfolio from Excel ─────────────────────────────────────────────────
+
+def load_portfolio() -> list:
+    wb = openpyxl.load_workbook(PORTFOLIO_FILE)
+    ws = wb.active
+    tickers = []
+    for row in ws.iter_rows(min_row=2, values_only=True):
+        ticker, name, market, active = row[0], row[1], row[2], row[3]
+        if ticker and str(active).strip().lower() == "yes":
+            tickers.append(str(ticker).strip())
+    print(f"Loaded portfolio: {tickers}")
+    return tickers
 
 # ── Indicator helpers ─────────────────────────────────────────────────────────
 
@@ -33,8 +48,6 @@ def compute_macd(series: pd.Series):
     ema26 = series.ewm(span=26, adjust=False).mean()
     macd_line = ema12 - ema26
     signal_line = macd_line.ewm(span=9, adjust=False).mean()
-    hist = macd_line - signal_line
-    # Crossover detection
     if macd_line.iloc[-1] > signal_line.iloc[-1] and macd_line.iloc[-2] <= signal_line.iloc[-2]:
         crossover = "Bullish crossover"
     elif macd_line.iloc[-1] < signal_line.iloc[-1] and macd_line.iloc[-2] >= signal_line.iloc[-2]:
@@ -43,7 +56,7 @@ def compute_macd(series: pd.Series):
         crossover = "Bullish"
     else:
         crossover = "Bearish"
-    return crossover, round(float(macd_line.iloc[-1]), 4), round(float(signal_line.iloc[-1]), 4)
+    return crossover
 
 def compute_bollinger(series: pd.Series, period: int = 20):
     sma = series.rolling(period).mean()
@@ -51,15 +64,14 @@ def compute_bollinger(series: pd.Series, period: int = 20):
     upper = sma + 2 * std
     lower = sma - 2 * std
     price = series.iloc[-1]
-    u, l, m = float(upper.iloc[-1]), float(lower.iloc[-1]), float(sma.iloc[-1])
+    u, l = float(upper.iloc[-1]), float(lower.iloc[-1])
     pct = (price - l) / (u - l) * 100 if (u - l) != 0 else 50
     if pct >= 80:
-        pos = f"Near upper band ({pct:.0f}%)"
+        return f"Near upper band ({pct:.0f}%)"
     elif pct <= 20:
-        pos = f"Near lower band ({pct:.0f}%)"
+        return f"Near lower band ({pct:.0f}%)"
     else:
-        pos = f"Middle ({pct:.0f}%)"
-    return pos, round(u, 2), round(l, 2)
+        return f"Middle ({pct:.0f}%)"
 
 def compute_emas(series: pd.Series):
     ema20 = series.ewm(span=20, adjust=False).mean().iloc[-1]
@@ -80,34 +92,20 @@ def volume_status(vol_series: pd.Series) -> str:
         return f"Normal ({ratio:.1f}x avg)"
 
 def overall_signal(rsi, macd_str, ema20_above, ema50_above, bb_pos):
-    bull = 0
-    bear = 0
-    if rsi < 35:
-        bull += 2
-    elif rsi > 65:
-        bear += 2
-    if "Bullish" in macd_str:
-        bull += 2
-    elif "Bearish" in macd_str:
-        bear += 2
-    if ema20_above:
-        bull += 1
-    else:
-        bear += 1
-    if ema50_above:
-        bull += 1
-    else:
-        bear += 1
-    if "lower" in bb_pos.lower():
-        bull += 1
-    elif "upper" in bb_pos.lower():
-        bear += 1
-    if bull >= 4:
-        return "BUY"
-    elif bear >= 4:
-        return "SELL"
-    else:
-        return "HOLD"
+    bull, bear = 0, 0
+    if rsi < 35: bull += 2
+    elif rsi > 65: bear += 2
+    if "Bullish" in macd_str: bull += 2
+    elif "Bearish" in macd_str: bear += 2
+    if ema20_above: bull += 1
+    else: bear += 1
+    if ema50_above: bull += 1
+    else: bear += 1
+    if "lower" in bb_pos.lower(): bull += 1
+    elif "upper" in bb_pos.lower(): bear += 1
+    if bull >= 4: return "BUY"
+    elif bear >= 4: return "SELL"
+    else: return "HOLD"
 
 # ── Fetch & analyse ───────────────────────────────────────────────────────────
 
@@ -127,12 +125,11 @@ def analyse_ticker(ticker: str) -> dict:
         change_str = f"+{change_pct}%" if change_pct >= 0 else f"{change_pct}%"
 
         rsi = compute_rsi(close)
-        macd_str, macd_val, signal_val = compute_macd(close)
-        bb_pos, bb_upper, bb_lower = compute_bollinger(close)
+        macd_str = compute_macd(close)
+        bb_pos = compute_bollinger(close)
         ema20_above, ema50_above, ema200_above = compute_emas(close)
         vol_status = volume_status(volume)
         signal = overall_signal(rsi, macd_str, ema20_above, ema50_above, bb_pos)
-
         rsi_label = "Oversold" if rsi < 30 else "Overbought" if rsi > 70 else "Neutral"
 
         return {
@@ -180,8 +177,7 @@ Data:
             },
             timeout=30
         )
-        body = resp.json()
-        return body["content"][0]["text"].strip()
+        return resp.json()["content"][0]["text"].strip()
     except Exception:
         return ""
 
@@ -193,16 +189,13 @@ DIR_EMOJI = {"up": "▲", "down": "▼"}
 def build_message(results: list, ai_summary: str) -> str:
     today = date.today().strftime("%b %d, %Y")
     lines = [f"📊 *Daily TA Report — {today}*\n"]
-
     if ai_summary:
         lines.append(f"_{ai_summary}_\n")
-
     for r in results:
         t = r["ticker"]
         if "error" in r:
             lines.append(f"*{t}* — ⚠️ {r['error']}\n")
             continue
-
         sig = r["signal"]
         emoji = SIGNAL_EMOJI.get(sig, "⚪")
         dir_e = DIR_EMOJI.get(r["direction"], "")
@@ -211,17 +204,15 @@ def build_message(results: list, ai_summary: str) -> str:
             "EMA50✓" if r["ema50_above"] else "EMA50✗",
             "EMA200✓" if r["ema200_above"] else "EMA200✗",
         ])
-
         lines.append(
             f"{emoji} *{t}* — {sig}\n"
             f"  Price: `{r['price']}` {dir_e} {r['change']}\n"
-            f"  RSI: `{r['rsi']}` ({r['rsi_label']})\n"
+            f"  RSI: `{r['rsi']}` \\({r['rsi_label']}\\)\n"
             f"  MACD: {r['macd']}\n"
             f"  BB: {r['bb_position']}\n"
             f"  Vol: {r['volume']}\n"
             f"  {ema_str}\n"
         )
-
     lines.append("_Signals: 🟢 BUY  🟡 HOLD  🔴 SELL_")
     return "\n".join(lines)
 
@@ -230,7 +221,7 @@ def send_telegram(message: str):
     resp = requests.post(url, json={
         "chat_id": TELEGRAM_CHAT_ID,
         "text": message,
-        "parse_mode": "Markdown",
+        "parse_mode": "MarkdownV2",
     }, timeout=15)
     resp.raise_for_status()
     print(f"Telegram sent: {resp.status_code}")
@@ -238,12 +229,10 @@ def send_telegram(message: str):
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
-    print(f"Analysing portfolio: {PORTFOLIO}")
-    results = [analyse_ticker(t.strip()) for t in PORTFOLIO]
-
+    portfolio = load_portfolio()
+    results = [analyse_ticker(t) for t in portfolio]
     for r in results:
         print(json.dumps(r, indent=2, default=str))
-
     ai_summary = get_ai_summary([r for r in results if "error" not in r])
     message = build_message(results, ai_summary)
     print("\n── Telegram message ──")
