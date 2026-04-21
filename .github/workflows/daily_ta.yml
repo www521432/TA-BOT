@@ -2,17 +2,14 @@ name: Daily TA Report
 
 on:
   schedule:
-    # US market close: 4:00 PM ET = 20:00 UTC (adjust for DST if needed)
-    # Taiwan market close: 1:30 PM CST = 05:30 UTC
-    # Run twice — after each market closes
-    - cron: "05 06 * * 1-5"   # Taiwan market close (Mon–Fri 06:05 UTC)
-    - cron: "05 20 * * 1-5"   # US market close    (Mon–Fri 20:05 UTC)
+    # 4:00 PM Taiwan time (CST) = 08:00 UTC
+    - cron: "00 08 * * 1-5"
 
-  # Allow manual trigger from GitHub UI for testing
+  # Manual trigger from GitHub Actions UI
   workflow_dispatch:
     inputs:
       portfolio:
-        description: "Comma-separated tickers (overrides secret)"
+        description: "Override tickers (comma-separated, e.g. AAPL,TSLA). Leave blank to use portfolio.xlsx"
         required: false
         default: ""
 
@@ -20,6 +17,8 @@ jobs:
   ta-report:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
       - name: Checkout repo
@@ -45,5 +44,5 @@ jobs:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          PORTFOLIO: ${{ inputs.portfolio || secrets.PORTFOLIO }}
+          PORTFOLIO_OVERRIDE: ${{ inputs.portfolio }}
         run: python scripts/analyze.py
