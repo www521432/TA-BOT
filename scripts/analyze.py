@@ -1,6 +1,6 @@
 """
 Daily Technical Analysis Bot
-Reads portfolio from portfolio.xlsx, computes TA, sends Telegram report.
+Reads portfolio from portfolio.csv, computes TA, sends Telegram report.
 """
 
 import os
